@@ -18,7 +18,7 @@ use anyhow::{anyhow, Context, Result};
 use devserver_options::DevServerOptions;
 use next_core::{
     create_app_source, create_server_rendered_source, create_web_entry_source, env::load_env,
-    source_map::NextSourceMapTraceContentSourceVc,
+    next_image::NextImageContentSourceVc, source_map::NextSourceMapTraceContentSourceVc,
 };
 use owo_colors::OwoColorize;
 use turbo_tasks::{
@@ -143,7 +143,7 @@ impl NextDevServerBuilder {
         let console_ui = Arc::new(ConsoleUi::new(log_options));
         let console_ui_to_dev_server = console_ui.clone();
 
-        let server = DevServer::listen(
+        DevServer::listen(
             turbo_tasks.clone(),
             move || {
                 source(
@@ -163,9 +163,7 @@ impl NextDevServerBuilder {
             )
                 .into(),
             console_ui_to_dev_server,
-        );
-
-        server
+        )
     }
 }
 
@@ -267,6 +265,7 @@ async fn source(
     .cell()
     .into();
     let source_map_trace = NextSourceMapTraceContentSourceVc::new(rendered_source).into();
+    let img_source = NextImageContentSourceVc::new(rendered_source).into();
     let source = RouterContentSource {
         routes: vec![
             ("__turbopack__/".to_string(), introspect),
@@ -275,6 +274,8 @@ async fn source(
                 "__nextjs_original-stack-frame".to_string(),
                 source_map_trace,
             ),
+            // TODO: Load path from next.config.js
+            ("_next/image".to_string(), img_source),
         ],
         fallback: main_source.into(),
     }
