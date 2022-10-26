@@ -16,16 +16,14 @@ use turbopack::{
     ModuleAssetContextVc,
 };
 use turbopack_core::{
-    chunk::dev::DevChunkingContextVc,
-    context::AssetContextVc,
-    issue::{Issue, IssueSeverity, IssueSeverityVc, IssueVc},
+    chunk::dev::DevChunkingContextVc, context::AssetContextVc, issue::IssueSeverity,
     virtual_asset::VirtualAssetVc,
 };
 use turbopack_dev_server::{
     html::DevHtmlAssetVc,
     source::{
         combined::{CombinedContentSource, CombinedContentSourceVc},
-        ContentSourceData, ContentSourceVc, NoContentSourceVc,
+        ContentSourceData, OptionContentSourceVc,
     },
 };
 use turbopack_ecmascript::{
@@ -40,6 +38,7 @@ use crate::{
     },
     embed_js::{next_js_file, wrap_with_next_js_fs},
     fallback::get_fallback_page,
+    issue::NextAppIssue,
     next_client::{
         context::{
             get_client_chunking_context, get_client_environment, get_client_module_options_context,
@@ -216,7 +215,7 @@ pub async fn create_app_source(
     env: ProcessEnvVc,
     browserslist_query: &str,
     externals: StringsVc,
-) -> Result<ContentSourceVc> {
+) -> Result<OptionContentSourceVc> {
     let project_root = wrap_with_next_js_fs(project_root);
 
     let app = project_root.join("app");
@@ -226,7 +225,7 @@ pub async fn create_app_source(
     } else if *src_app.get_type().await? == FileSystemEntryType::Directory {
         src_app
     } else {
-        return Ok(NoContentSourceVc::new().into());
+        return Ok(OptionContentSourceVc::cell(None));
     };
 
     let context_ssr = app_context(
@@ -253,19 +252,21 @@ pub async fn create_app_source(
 
     let fallback_page = get_fallback_page(project_root, server_root, browserslist_query);
 
-    Ok(create_app_source_for_directory(
-        context_ssr,
-        context,
-        project_root,
-        app_dir,
-        server_root,
-        EcmascriptChunkPlaceablesVc::cell(server_runtime_entries),
-        fallback_page,
-        server_root,
-        LayoutSegmentsVc::cell(Vec::new()),
-        output_path,
-    )
-    .into())
+    Ok(OptionContentSourceVc::cell(Some(
+        create_app_source_for_directory(
+            context_ssr,
+            context,
+            project_root,
+            app_dir,
+            server_root,
+            EcmascriptChunkPlaceablesVc::cell(server_runtime_entries),
+            fallback_page,
+            server_root,
+            LayoutSegmentsVc::cell(Vec::new()),
+            output_path,
+        )
+        .into(),
+    )))
 }
 
 #[turbo_tasks::function]
@@ -334,7 +335,7 @@ async fn create_app_source_for_directory(
             let layout = layout.context("required")?;
             layout.write(FileContentVc::from(File::from(content)));
 
-            AppSourceIssue {
+            NextAppIssue {
                 severity: IssueSeverity::Warning.into(),
                 path: *page_file,
                 message: StringVc::cell(format!(
@@ -568,42 +569,5 @@ import BOOTSTRAP from {};
             intermediate_output_path,
         }
         .cell())
-    }
-}
-
-#[turbo_tasks::value(shared)]
-struct AppSourceIssue {
-    pub severity: IssueSeverityVc,
-    pub path: FileSystemPathVc,
-    pub message: StringVc,
-}
-
-#[turbo_tasks::value_impl]
-impl Issue for AppSourceIssue {
-    #[turbo_tasks::function]
-    fn severity(&self) -> IssueSeverityVc {
-        self.severity
-    }
-
-    #[turbo_tasks::function]
-    async fn title(&self) -> Result<StringVc> {
-        Ok(StringVc::cell(
-            "An issue occurred while preparing your Next.js app".to_string(),
-        ))
-    }
-
-    #[turbo_tasks::function]
-    fn category(&self) -> StringVc {
-        StringVc::cell("next app".to_string())
-    }
-
-    #[turbo_tasks::function]
-    fn context(&self) -> FileSystemPathVc {
-        self.path
-    }
-
-    #[turbo_tasks::function]
-    fn description(&self) -> StringVc {
-        self.message
     }
 }
