@@ -1,1 +1,7 @@
-@import "https://example.com/stylesheet.css";
+@import "https://example.com/stylesheet1.css";
+@import url("https://example.com/stylesheet2.css");
+@import "./other.css";
+
+body {
+  background-color: blue;
+}

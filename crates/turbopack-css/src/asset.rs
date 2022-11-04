@@ -203,6 +203,17 @@ impl CssChunkItem for ModuleChunkItem {
         if let ParseResult::Ok { stylesheet, .. } = &*parsed {
             let mut stylesheet = stylesheet.clone();
 
+            // remove imports
+            stylesheet.rules.retain(|r| {
+                !matches!(
+                    r,
+                    &Rule::AtRule(box AtRule {
+                        prelude: Some(box AtRulePrelude::ImportPrelude(_)),
+                        ..
+                    })
+                )
+            });
+
             let globals = Globals::new();
             GLOBALS.set(&globals, || {
                 if !visitors.is_empty() {
@@ -214,17 +225,6 @@ impl CssChunkItem for ModuleChunkItem {
                 for visitor in root_visitors {
                     stylesheet.visit_mut_with(&mut visitor.create());
                 }
-            });
-
-            // remove imports
-            stylesheet.rules.retain(|r| {
-                !matches!(
-                    r,
-                    &Rule::AtRule(box AtRule {
-                        prelude: Some(box AtRulePrelude::ImportPrelude(_)),
-                        ..
-                    })
-                )
             });
 
             let mut code_string = format!("/* {} */\n", self.module.path().to_string().await?);

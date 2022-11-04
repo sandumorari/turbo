@@ -4,16 +4,26 @@ use swc_core::{
     css::{
         ast::*,
         codegen::{writer::basic::BasicCssWriter, CodeGenerator, Emit},
+        visit::VisitMut,
     },
+    ecma::atoms::JsWord,
 };
 use turbo_tasks::{primitives::StringVc, ValueToString, ValueToStringVc};
 use turbopack_core::{
-    chunk::{ChunkableAssetReference, ChunkableAssetReferenceVc},
+    chunk::{ChunkableAssetReference, ChunkableAssetReferenceVc, ChunkingContextVc},
     reference::{AssetReference, AssetReferenceVc},
-    resolve::{origin::ResolveOriginVc, parse::RequestVc, ResolveResultVc},
+    resolve::{
+        origin::ResolveOriginVc,
+        parse::{Request, RequestVc},
+        ResolveResultVc,
+    },
 };
 
-use crate::references::{css_resolve, AstPathVc};
+use crate::{
+    code_gen::{CodeGenerateable, CodeGenerateableVc, CodeGeneration, CodeGenerationVc},
+    create_visitor,
+    references::{css_resolve, AstPathVc},
+};
 
 #[turbo_tasks::value(into = "new")]
 pub struct ImportAttributes {
@@ -183,6 +193,84 @@ impl ValueToString for ImportAssetReference {
             "import(url) {}",
             self.request.to_string().await?,
         )))
+    }
+}
+
+#[turbo_tasks::value_impl]
+impl CodeGenerateable for ImportAssetReference {
+    #[turbo_tasks::function]
+    async fn code_generation(
+        self_vc: ImportAssetReferenceVc,
+        _context: ChunkingContextVc,
+    ) -> Result<CodeGenerationVc> {
+        let reference = &*self_vc.await?;
+        let request = (*reference.request.await?).clone();
+        let visitors = match request {
+            Request::Uri {
+                protocol,
+                remainder,
+            } => {
+                vec![
+                    create_visitor!(visit_mut_stylesheet(stylesheet: &mut Stylesheet) {
+                        let mut last_import_index = None;
+                        for (i, rule) in stylesheet.rules.iter().enumerate() {
+                            match rule {
+                                Rule::AtRule(r) => {
+                                    match &r.prelude {
+                                        Some(prelude) => {
+                                            match **prelude {
+                                                AtRulePrelude::ImportPrelude(_) => {
+                                                   last_import_index = Some(i);
+                                                },
+                                                _ => {
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        None => {
+                                            break;
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    break;
+                                }
+                            }
+                        }
+
+                        let import_word = JsWord::from("import");
+                        let url_word = JsWord::from(format!("\"{}{}\"", protocol.clone(), remainder.clone()));
+                        stylesheet.rules.insert(last_import_index.map_or(0, |i| i + 1), Rule::AtRule(AtRule {
+                            span: DUMMY_SP,
+                            name: AtRuleName::Ident(Ident {
+                                span: DUMMY_SP,
+                                value: import_word.clone(),
+                                raw: Some(import_word),
+                            }),
+                            prelude: Some(Box::new(AtRulePrelude::ImportPrelude(ImportPrelude {
+                                span: DUMMY_SP,
+                                href: Box::new(ImportPreludeHref::Str(Str {
+                                    raw: Some(url_word.clone()),
+                                    span: DUMMY_SP,
+                                    value: url_word,
+                                })),
+                                // TODO handle import with layer
+                                layer_name: None,
+                                // TODO handle import with supports
+                                supports: None,
+                                // TODO handle import with media
+                                media: None,
+                            }))),
+                            block: None,
+                        }.into()));
+                        }
+                    ),
+                ]
+            }
+            _ => vec![],
+        };
+
+        Ok(CodeGeneration { visitors }.into())
     }
 }
 
