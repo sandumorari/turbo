@@ -16,7 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use event_listener::{Event, EventListener};
 use futures::FutureExt;
 use serde::{de::Visitor, Deserialize, Serialize};
@@ -355,13 +355,22 @@ impl<B: Backend> TurboTasks<B> {
                             FormatDuration(duration)
                         )
                     }
-                    let result = result.map_err(|any| match any.downcast::<String>() {
-                        Ok(owned) => Some(Cow::Owned(*owned)),
-                        Err(any) => match any.downcast::<&'static str>() {
-                            Ok(str) => Some(Cow::Borrowed(*str)),
-                            Err(_) => None,
-                        },
-                    });
+                    let result = result
+                        .map(|r| {
+                            r.with_context(|| {
+                                format!(
+                                    "while executing {}",
+                                    this.backend.get_task_description(task_id)
+                                )
+                            })
+                        })
+                        .map_err(|any| match any.downcast::<String>() {
+                            Ok(owned) => Some(Cow::Owned(*owned)),
+                            Err(any) => match any.downcast::<&'static str>() {
+                                Ok(str) => Some(Cow::Borrowed(*str)),
+                                Err(_) => None,
+                            },
+                        });
                     this.backend.task_execution_result(task_id, result, &*this);
                     this.notify_scheduled_tasks_internal();
                     let reexecute = this.backend.task_execution_completed(
